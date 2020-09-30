@@ -4,7 +4,6 @@ import re
 import pickle
 import csv
 
-
 topic_file = "../ie_topics.csv"
 topic_names = ["T" + str(i) for i in range(1, 21)]
 topic_values = [np.float64 for i in range(1, 21)]
@@ -93,68 +92,62 @@ new_topics_dict = {}
 for key, val in topics_dict.items():
     old_key = key
     old_val = val
-    new_val = old_val[0:22] # 22 for IE, 21 for HT
+    new_val = old_val[0:22]
     new_key = old_val[22:]
-    #(new_val)
-    #print(new_key)
     for i in new_key:
         new_topics_dict[i] = new_val
 
-col_type = {"article_title": str, "URL": str, "cluster_id" : int}
-combined = []
-for i in range(1, 13):
-    for j in range(1, 4):
-        combined.append(pd.read_csv("../ie/ie_combined_mo" + str(i) + "p" + str(j) + ".csv", usecols = ["article_title", "URL", "cluster_id"], dtype = col_type))
+# START REMOVAL
 
-combined = pd.concat(combined, ignore_index = True)
+# col_type = {"article_title": str, "URL": str, "cluster_id" : int}
+# # combined = []
+# # for i in range(1, 13):
+# #     for j in range(1, 4):
+# #         combined.append(pd.read_csv("../ie/ie_combined_mo" + str(i) + "p" + str(j) + ".csv", usecols = ["article_title", "URL", "cluster_id"], dtype = col_type))
+# #
+# # combined = pd.concat(combined, ignore_index = True)
+# #
+# # combined["Topic1"] = ""
+# # combined["Topic2"] = ""
+# # for i in range(1, 21):
+# #     combined["T" + str(i)] = 0
+# #
+# # print(combined.head())
+# # count = 0
+# # for i in range(combined.shape[0]):
+# #     if ((str(combined.loc[i, "URL"]) + "\n") in new_topics_dict.keys()):
+# #         top_list = new_topics_dict[combined.loc[i, "URL"] + "\n"]
+# #         combined.loc[i, "Topic1" : "T20"] = top_list
+# #     elif (str(combined.loc[i, "URL"]) in new_topics_dict.keys()):
+# #         top_list = new_topics_dict[combined.loc[i, "URL"]]
+# #         combined.loc[i, "Topic1": "T20"] = top_list
+# #         print("GOT HERE")
+# #     else:
+# #         count += 1
+# #         print("OH NOOOOOOOO")
+# #
+# # print(count)
+# # print(combined.head())
+# # combined.to_csv("ie_combined.csv")
+# #
+# # topic_names = ["article_title", "URL", "cluster_id", "Topic1", "Topic2"]
+# # topic_dist = ["T" + str(i) for i in range(1, 20)]
+# # topic_names = topic_names + topic_dist
+# # topic_values = [str, str, int, str, str]
+# # topic_values = topic_values + [np.float64 for i in range(1, 20)]
+# # col_dict = {k : v for k, v in zip(topic_names, topic_values)}
+# # combined = pd.read_csv("ht_combined.csv", usecols = topic_names , dtype = col_dict)
+# #
+# # combined_dict = {}
+# # for i in range(combined.shape[0]):
+# #         combined_dict[combined.loc[i, "URL"]] = [combined.loc[i, "Topic1"], combined.loc[i, "Topic2"],
+# #                                 combined.loc[i, "T1"], combined.loc[i, "T2"], combined.loc[i, "T3"], combined.loc[i, "T4"],
+# #                                combined.loc[i, "T5"], combined.loc[i, "T6"], combined.loc[i, "T7"], combined.loc[i, "T8"],
+# #                                combined.loc[i, "T9"], combined.loc[i, "T10"], combined.loc[i, "T11"], combined.loc[i, "T12"],
+# #                                combined.loc[i, "T13"], combined.loc[i, "T14"], combined.loc[i, "T15"], combined.loc[i, "T16"],
+# #                                combined.loc[i, "T17"], combined.loc[i, "T18"], combined.loc[i, "T19"]]
 
-combined["Topic1"] = ""
-combined["Topic2"] = ""
-for i in range(1, 21):
-    combined["T" + str(i)] = 0
-
-print(combined.head())
-unmatched_urls = []
-count = 0
-for i in range(combined.shape[0]):
-    if ((str(combined.loc[i, "URL"]) + "\n") in new_topics_dict.keys()):
-        top_list = new_topics_dict[combined.loc[i, "URL"] + "\n"]
-        combined.loc[i, "Topic1" : "T20"] = top_list
-    elif (str(combined.loc[i, "URL"]) in new_topics_dict.keys()):
-        top_list = new_topics_dict[combined.loc[i, "URL"]]
-        combined.loc[i, "Topic1": "T20"] = top_list
-        print("GOT HERE")
-    else:
-        count += 1
-        unmatched_urls.append(combined.loc[i, "URL"])
-        print("OH NOOOOOOOO")
-
-print(count)
-print(combined.head())
-combined.to_csv("ie_combined.csv")
-
-with open('unmatched_urls.csv','w') as result_file:
-    wr = csv.writer(result_file, dialect='excel')
-    wr.writerows(unmatched_urls)
-
-exit(1)
-
-topic_names = ["article_title", "URL", "cluster_id", "Topic1", "Topic2"]
-topic_dist = ["T" + str(i) for i in range(1, 20)]
-topic_names = topic_names + topic_dist
-topic_values = [str, str, int, str, str]
-topic_values = topic_values + [np.float64 for i in range(1, 20)]
-col_dict = {k : v for k, v in zip(topic_names, topic_values)}
-combined = pd.read_csv("ht_combined.csv", usecols = topic_names , dtype = col_dict)
-
-combined_dict = {}
-for i in range(combined.shape[0]):
-        combined_dict[combined.loc[i, "URL"]] = [combined.loc[i, "Topic1"], combined.loc[i, "Topic2"],
-                                combined.loc[i, "T1"], combined.loc[i, "T2"], combined.loc[i, "T3"], combined.loc[i, "T4"],
-                               combined.loc[i, "T5"], combined.loc[i, "T6"], combined.loc[i, "T7"], combined.loc[i, "T8"],
-                               combined.loc[i, "T9"], combined.loc[i, "T10"], combined.loc[i, "T11"], combined.loc[i, "T12"],
-                               combined.loc[i, "T13"], combined.loc[i, "T14"], combined.loc[i, "T15"], combined.loc[i, "T16"],
-                               combined.loc[i, "T17"], combined.loc[i, "T18"], combined.loc[i, "T19"]]
+# END REMOVAL
 
 topic_names = ["storytime", "id", "url", "cluster_id", "lmviews", "seq"]
 topic_values = [str, int, str, int, np.float64, int]
@@ -165,16 +158,15 @@ mina_dict = {}
 for i in range(mina.shape[0]):
     cluster_id = mina.loc[i, "cluster_id"]
     if cluster_id in mina_dict.keys():
-        print("got here")
         dict_list = mina_dict[cluster_id]
         url_dict = {}
-        top_list = combined_dict[mina.loc[i, "url"]]
+        top_list = new_topics_dict[mina.loc[i, "url"] + "\n"]
         url_dict[mina.loc[i, "url"]] = top_list
         dict_list.append(url_dict)
         mina_dict[cluster_id] = dict_list
     else:
         url_dict = {}
-        top_list = combined_dict[mina.loc[i, "url"]]
+        top_list = new_topics_dict[mina.loc[i, "url"] + "\n"]
         url_dict[mina.loc[i, "url"]] = top_list
         mina_dict[cluster_id] = [url_dict]
 
