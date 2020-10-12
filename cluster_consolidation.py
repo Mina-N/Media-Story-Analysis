@@ -3,6 +3,7 @@ import numpy as np
 import re
 import pickle
 import csv
+from fuzzywuzzy import fuzz
 
 topic_file = "../ie_topics.csv"
 topic_names = ["T" + str(i) for i in range(1, 21)]
@@ -95,6 +96,11 @@ for key, val in topics_dict.items():
     new_val = old_val[0:22]
     new_key = old_val[22:]
     for i in new_key:
+        i = i.rstrip()
+        if (i):
+            end_index = i.rfind("/")
+            if ((len(i) - end_index < 3) or "index.php" in i):
+                i = i[:end_index]
         new_topics_dict[i] = new_val
 
 # START REMOVAL
@@ -152,24 +158,71 @@ for key, val in topics_dict.items():
 topic_names = ["storytime", "id", "url", "cluster_id", "lmviews", "seq"]
 topic_values = [str, int, str, int, np.float64, int]
 col_dict = {k : v for k, v in zip(topic_names, topic_values)}
-mina = pd.read_csv("../mina_IE.csv", usecols = topic_names, dtype = col_dict)
+mina = pd.read_csv("../mina_IE.csv", usecols = topic_names, dtype = col_dict, engine = "python")
 
 mina_dict = {}
+missing_urls = []
+count_missing_urls = 0
 for i in range(mina.shape[0]):
     cluster_id = mina.loc[i, "cluster_id"]
+    temp_url = mina.loc[i, "url"]
+    temp_url = temp_url.rstrip()
+    if (temp_url):
+        end_index = temp_url.rfind("/")
+        if ((len(temp_url) - end_index < 3) or "index.php" in temp_url):
+            temp_url = temp_url[:end_index]
     if cluster_id in mina_dict.keys():
         dict_list = mina_dict[cluster_id]
         url_dict = {}
-        top_list = new_topics_dict[mina.loc[i, "url"] + "\n"]
-        url_dict[mina.loc[i, "url"]] = top_list
-        dict_list.append(url_dict)
-        mina_dict[cluster_id] = dict_list
+        if ("http://archive.indianexpress.com" + temp_url in new_topics_dict):
+            top_list = new_topics_dict["http://archive.indianexpress.com" + temp_url]
+            url_dict[mina.loc[i, "url"]] = top_list
+            dict_list.append(url_dict)
+            mina_dict[cluster_id] = dict_list
+        else:
+            flag = 0
+            id = re.findall("\d{6}", temp_url)[0]
+            for key in new_topics_dict.keys():
+                if (fuzz.ratio(key, "http://archive.indianexpress.com" + temp_url) > 75 and (str(id) in key)):
+                    top_list = new_topics_dict[key]
+                    url_dict[mina.loc[i, "url"]] = top_list
+                    dict_list.append(url_dict)
+                    mina_dict[cluster_id] = dict_list
+                    flag = 1
+                    print("GOT TO FUZZY RATIO!!!")
+                    break
+            if (flag == 0):
+                missing_urls.append("http://archive.indianexpress.com" + temp_url)
+                count_missing_urls += 1
+                print("OH NO!!!")
     else:
         url_dict = {}
-        top_list = new_topics_dict[mina.loc[i, "url"] + "\n"]
-        url_dict[mina.loc[i, "url"]] = top_list
-        mina_dict[cluster_id] = [url_dict]
+        if ("http://archive.indianexpress.com" + temp_url in new_topics_dict):
+            top_list = new_topics_dict["http://archive.indianexpress.com" + temp_url]
+            url_dict[mina.loc[i, "url"]] = top_list
+            mina_dict[cluster_id] = [url_dict]
+        else:
+            flag = 0
+            id = re.findall("\d{6}", temp_url)[0]
+            for key in new_topics_dict.keys():
+                if (fuzz.ratio(key, "http://archive.indianexpress.com" + temp_url) > 75 and (str(id) in key)):
+                    top_list = new_topics_dict[key]
+                    url_dict[mina.loc[i, "url"]] = top_list
+                    mina_dict[cluster_id] = [url_dict]
+                    flag = 1
+                    print("GOT TO FUZZY RATIO!!!")
+                    break
+            if (flag == 0):
+                missing_urls.append("http://archive.indianexpress.com" + temp_url)
+                count_missing_urls += 1
+                print("OH NO!!!")
 
+with open('missing_urls_2.csv', 'w', newline = '') as result_file:
+    for i in missing_urls:
+        wr = csv.writer(result_file, dialect='excel')
+        wr.writerow([i])
+
+print(count_missing_urls)
 print(len(mina_dict))
 
 def save_obj(obj, name ):
