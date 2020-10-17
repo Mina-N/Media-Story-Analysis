@@ -1,0 +1,705 @@
+---
+title: "Sentiment"
+author: "Mina Narayanan"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+## Global knitr options
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(cache = FALSE)
+knitr::opts_chunk$set(autodep = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+```
+
+```{r, warning = FALSE, message = FALSE}
+## Increase Memory Limit
+invisible(utils::memory.limit(64000))
+options(java.parameters = "-Xmx64000m")
+
+## Data Frame Packages
+library(dplyr)
+library(stringr)
+library(readr)
+library(readxl)
+
+## Data Visualization Packages
+library(ggplot2)
+library(Rtsne)
+library(jsonlite)
+
+## Text Mining Pacakges
+library(data.table)
+library(Matrix)
+library(text2vec)
+library(tm)
+library(SnowballC)
+library(rARPACK)
+library(ggupset)
+
+# Sentiment Packages
+library(tidytext)
+library(tidyverse)
+library(textdata)
+library(stringr)
+library(janeaustenr)
+library(wordcloud)
+```
+
+## Load Data
+
+First we load the data of NINR grants awarded in 2019.  We pull four sources of text:
+\begin{itemize}
+\item T - Title
+\item A - Abstract Text
+\item S - Specific Aims (SA) Text
+\end{itemize}x
+```{r, message = FALSE, cache = TRUE}
+ht_1 = read_csv("./ht/ht1-6monthsscrapedinfo.csv", guess_max = 1000000)
+ht_2 = read_csv("./ht/ht7-12monthsscrapedinfo.csv", guess_max = 1000000)
+
+ht <- rbind(ht_1, ht_2)
+rm(ht_1)
+rm(ht_2)
+```
+
+### Clean Up Text
+
+Let's clean up the text by making everything lowercase, removing punctuation, etc.
+```{r}
+# Remove weird characters
+ht$article_text = str_replace_all(ht$article_text, "\n", " ")
+ht$article_text = str_replace_all(ht$article_text, "\r", " ")
+ht$article_text = str_replace_all(ht$article_text, "'", "")
+ht$article_text = str_replace_all(ht$article_text, "-", " ")
+
+# Replace non-alpha numeric characters with a space
+ht$article_text = str_replace_all(ht$article_text, "[^abcdefghijklmnopqrstuvwxyzABCDEFHIJKLMNOPQRSTUVWXZ ]", " ")
+
+# Put everything in lowercase
+ht$article_text = tolower(ht$article_text)
+
+# Remove extra spaces and strip whitespace padding
+ht$article_text = str_replace_all(ht$article_text, "\\s+", " ")
+ht$article_text = str_trim(ht$article_text, side = "both")
+
+```
+
+### Unique Text
+
+Let's only keep applications with unique text.
+```{r}
+ht <- ht[!duplicated(ht[ , c("article_text")]),]
+nrow(ht)
+ht$id <- factor(1:nrow(ht))
+
+```
+### Remove unnecessary columns and tokenize
+```{r}
+
+ht_slim <- ht %>% select(url, title, article_text)
+
+ht_tokens <- ht_slim %>%
+  mutate(linenumber = row_number()) %>%
+  unnest_tokens(word, article_text)
+
+```
+
+### Compare three sentiment dictionaries
+```{r}
+afinn <- ht_tokens %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+  group_by(index = linenumber %/% 80) %>% 
+  summarise(sentiment = sum(value)) %>% 
+  mutate(method = "AFINN")
+
+bing_and_nrc <- bind_rows(ht_tokens %>% 
+                            inner_join(get_sentiments("bing")) %>%
+                            mutate(method = "Bing et al."),
+                          ht_tokens %>% 
+                            inner_join(get_sentiments("nrc") %>% 
+                                         filter(sentiment %in% c("positive", 
+                                                                 "negative"))) %>%
+                            mutate(method = "NRC")) %>%
+  count(method, index = linenumber %/% 80, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+bind_rows(afinn, 
+          bing_and_nrc) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+```
+### Bing Sentiment Analysis with Inner Join
+```{r}
+ht_bing_sentiment_index <- ht_tokens %>%
+  inner_join(get_sentiments("bing"))%>%
+  count(index = linenumber, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+ht_bing_sentiment <- ht_tokens %>%
+  inner_join(get_sentiments("bing"))
+
+ggplot(ht_bing_sentiment_index, aes(index, sentiment)) +
+  ylim(-100, 100) + 
+  geom_col(show.legend = FALSE) 
+  #facet_wrap(~book, ncol = 2, scales = "free_x")
+
+ht_bing_sentiment_index <- ht_bing_sentiment_index %>%
+                            rename(linenumber = index)
+
+ht_bing <- merge(x = ht_bing_sentiment, y = ht_bing_sentiment_index, by = "linenumber", all.x = TRUE)
+ht_bing <- ht_bing[!duplicated(ht_bing[ , c("linenumber")]),]
+drops = c("sentiment.x", "word")
+ht_bing <- ht_bing[, !(names(ht_bing) %in% drops)]
+ht_bing <- ht_bing %>% rename(sentiment = sentiment.y)
+
+write_csv(ht_bing, "sentiment_scores_bing.csv")
+
+```
+### NRC Sentiment Analysis with Inner Join
+```{r}
+
+ht_nrc_sentiment_index <- ht_tokens %>%
+  inner_join(get_sentiments("nrc"))%>%
+  count(index = linenumber, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+ht_nrc_sentiment <- ht_tokens %>%
+  inner_join(get_sentiments("nrc"))
+
+ggplot(ht_nrc_sentiment_index, aes(index, sentiment)) +
+  ylim(-125, 250) + 
+  geom_col(show.legend = FALSE) 
+  #facet_wrap(~book, ncol = 2, scales = "free_x")
+
+ht_nrc_sentiment_index <- ht_nrc_sentiment_index %>%
+                            rename(linenumber = index)
+
+ht_nrc <- merge(x = ht_nrc_sentiment, y = ht_nrc_sentiment_index, by = "linenumber", all.x = TRUE)
+ht_nrc <- ht_nrc[!duplicated(ht_nrc[ , c("linenumber")]),]
+drops = c("sentiment.x", "word")
+ht_nrc <- ht_nrc[, !(names(ht_nrc) %in% drops)]
+ht_nrc <- ht_nrc %>% rename(sentiment = sentiment.y)
+
+write_csv(ht_nrc, "sentiment_scores_nrc.csv")
+```
+
+
+### AFINN Seniment Analysis with Inner Join
+```{r}
+
+ht_afinn_sentiment <- ht_tokens %>%
+  inner_join(get_sentiments("afinn"))
+
+ht_afinn_sentiment_index <- ht_afinn_sentiment %>%
+  group_by(index = linenumber) %>%
+  summarise(negative = sum(value < 0), positive = sum(value > 0), sentiment = positive - negative ) %>% 
+  mutate(method = "AFINN")
+
+ggplot(ht_afinn_sentiment_index, aes(index, sentiment)) +
+  ylim(-100, 100) + 
+  geom_col(show.legend = FALSE) 
+  #facet_wrap(~book, ncol = 2, scales = "free_x")
+
+ht_afinn_sentiment_index <- ht_afinn_sentiment_index %>%
+                            rename(linenumber = index)
+
+ht_afinn <- merge(x = ht_afinn_sentiment, y = ht_afinn_sentiment_index, by = "linenumber", all.x = TRUE)
+ht_afinn <- ht_afinn[!duplicated(ht_afinn[ , c("linenumber")]),]
+drops = c("value", "word", "method")
+ht_afinn <- ht_afinn[, !(names(ht_afinn) %in% drops)]
+
+write_csv(ht_afinn, "sentiment_scores_afinn.csv")
+
+```
+
+
+### Word Clouds
+```{r}
+ht_tokens %>%
+  anti_join(stop_words) %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100))
+
+```
+
+
+
+
+
+
+
+
+
+## DTM
+
+Let's build a Document-Term Matrix (DTM).
+```{r}
+setDT(ht)
+setkey(ht, id)
+```
+
+
+###  Vocabulary
+
+Let's build a vocabulary that uses stemming.
+```{r}
+stem_tokenizer =function(x) {
+  word_tokenizer(x) %>% lapply(SnowballC::wordStem, language="en") 
+  }
+
+it = itoken(ht$article_text,
+            #tokenizer = word_tokenizer, 
+            tokenizer = stem_tokenizer,
+            ids = ht$id, 
+            progressbar = FALSE)
+
+stop = stopwords(kind = "SMART")
+stop = str_replace_all(stop, "'", "")
+
+vocab = create_vocabulary(it, stopwords = stop, ngram = c(1L, 2L))
+
+cat("Number of terms in vocabulary:", dim(vocab)[1])
+#vocab %>% arrange(desc(term_count)) %>% head(20)
+```
+
+Let's prune the vocabulary by only including terms that appear at least 10 times.
+```{r}
+vocab = prune_vocabulary(vocab,
+                                term_count_min = 10)
+                                #doc_count_min = 5,
+                                #doc_proportion_max = 0.9,
+                                #doc_proportion_min = 0.001)
+
+
+cat("Number of terms in vocabulary:", dim(vocab)[1])
+#vocab %>% arrange(desc(term_count)) %>% head(20)
+```
+
+### Extra Stop Words
+
+```{r}
+stopwords = read_excel("ht_stopwords.xlsx")
+vocab = filter(vocab, !(term %in% stopwords))
+cat("\nNumber of terms in vocabulary:", dim(vocab)[1])
+
+vocab = filter(vocab, (nchar(term) >  2))
+vocab = filter(vocab, !(grepl("\\b([a-zA-Z])\\1\\1+\\b", term, fixed = FALSE)))
+
+```
+
+
+### Build DTM
+
+Now let's build the DTM for the training data.
+```{r}
+vectorizer = vocab_vectorizer(vocab)
+dtm = create_dtm(it, vectorizer)
+
+#identical(rownames(dtm), as.character(nih$AID))
+
+cat("DTM dimensions:", dim(dtm))
+```
+
+### Write DTM to file
+
+```{r}
+m <- as.matrix(dtm)
+#write.csv(m, file = 'dtm_ninr.csv')
+```
+
+## Topic Modeling
+
+Here we use the most popular topic modeling algorithm, Latent Dirichlet Allocation (LDA).  LDA assigns a probability to each word of belonging to each topic, and then assigns a percentage of each topic to each document.  For example, if we had 2 topics, LDA would assign two percentages (which add up to 100%) to each document.  Here we plot the 20 most indicative words of each topic, and the distribution of the most likely topics of the documents.
+
+### Lowest Perplexity
+
+UNCOMMENT THIS CODE TO FIND THE OPTIMAL PARAMETERS AGAIN
+```{r}
+ topics = 10:20
+ 
+ pp = NULL
+ 
+ for(topic in topics){
+   a1 = 50/topic # Default Values
+   b1 = 1/topic  # Default Values
+   
+   as = c(a1)
+   bs = c(b1)
+   lda_model = LDA$new(doc_topic_prior = a1, 
+                       topic_word_prior = b1,
+                       n_topics = topic)
+   
+   set.seed(123)
+   doc_topic_distr = 
+        lda_model$fit_transform(x = dtm, 
+                                n_iter = 1000, 
+                                convergence_tol = 0.0001, 
+                                n_check_convergence = 25, 
+                                progressbar = FALSE,
+                                verbose = FALSE)
+   
+   topic_word_distr = lda_model$topic_word_distribution
+  
+   p1 = perplexity(dtm, topic_word_distr, doc_topic_distr)
+   
+   print(paste(a1, b1, p1))
+   
+   for(a in as){
+     for(b in bs){
+       lda_model = LDA$new(doc_topic_prior = a, 
+                           topic_word_prior = b,
+                           n_topics = topic)
+       
+       set.seed(123)
+       doc_topic_distr = 
+            lda_model$fit_transform(x = dtm, 
+                                    n_iter = 1000, 
+                                    convergence_tol = 0.0001, 
+                                    n_check_convergence = 25, 
+                                    progressbar = FALSE,
+                                    verbose = FALSE)
+       
+       topic_word_distr = lda_model$topic_word_distribution
+       
+       p = perplexity(dtm, topic_word_distr, doc_topic_distr)
+       # TODO: Check coherence
+       
+       print(paste(topic, a, b, p))
+       
+       if(p < p1){
+         a1 = a
+         b1 = b
+         p1 = p
+       }
+     }
+   }
+   
+   pp1 = data.frame(Topics = topic, Alpha = a1, Beta = b1, Perplexity = p1)
+   pp = rbind(pp, pp1)
+ }
+ 
+ cat("\n\n")
+ 
+ pp
+ write_csv(pp, "Clustering_LDA_Param.csv")
+```
+
+Let's load the optimal parameters.
+```{r}
+pp = read_csv("Clustering_LDA_Param.csv")
+pp = data.frame(pp)
+
+str(pp)
+```
+
+Now we choose the desired number of topic.
+```{r, message = FALSE, warining = FALSE}
+topic = 19
+
+pp1 = filter(pp, Topics == topic)
+a1 = pp1$Alpha
+b1 = pp1$Beta
+t1 = pp1$Topics
+
+lda_model = LDA$new(doc_topic_prior = a1, 
+                    topic_word_prior = b1,
+                    n_topics = t1)
+
+set.seed(123)
+doc_topic_distr = 
+     lda_model$fit_transform(x = dtm, 
+                             n_iter = 1000, 
+                             convergence_tol = 0.0001, 
+                             n_check_convergence = 25, 
+                             progressbar = FALSE,
+                             verbose = FALSE)
+
+topic_word_distr = lda_model$topic_word_distribution
+
+
+#cat("\n\n")
+
+d = as.matrix(doc_topic_distr)
+d = data.frame(id = row.names(d), d)
+colnames(d) = str_replace_all(names(d), "X", "T")
+
+ for(i in 1:dim(d)[1]){
+    temp = names(sort(d[i, 2:dim(d)[2]], decreasing = TRUE))[1:2]
+    d[i, "Topic1"] = temp[1]
+    d[i, "Topic2"] = temp[2]
+ }
+
+#d$Topic = factor(d$Topic)
+
+l = dim(d)[2]
+d = d[, c(1, l-1,l, 4:l-2)]
+
+cat("\n\n")
+
+k = lda_model$get_top_words(n = 20, topic_number = 1:t1, lambda = 0.5)
+
+k
+
+#perplexity(dtm, topic_word_distr, doc_topic_distr)
+
+table(d$Topic1)
+
+k1 = data.frame(k)
+colnames(k1) = paste0("Topic", 1:t1)
+
+k1
+```
+
+# Derive Acronyms Using Lookup Table
+```{r}
+acronym_lookup <- data.frame("Acronym" = c("pa"), 
+                             "Derivation" = c("physical activity"))                                                                                                                                                         
+  
+for (row in 1:nrow(k)) {
+  for (col in 1:ncol(k)) {
+    for (row_acro in 1:nrow(acronym_lookup)) {
+      if (as.String(k[row, col]) == as.String(acronym_lookup[row_acro, 1])) {
+        k[row, col] <- as.String(acronym_lookup[row_acro, 2])
+      }
+    }
+  }
+}
+
+k
+```
+
+### Term frequency functions
+```{r}
+find_dtm <- function(word, word_matrix) {
+  cond = 0
+  freq = 0
+  for (col in colnames(word_matrix)) {
+    if (grepl(word, col)) {
+      cond = 1
+      freq <- freq + sum(word_matrix[, col])
+    }
+  }   
+  return(list(cond=cond, freq=freq))
+}
+
+```
+
+
+### Calculate term frequency with DTM
+
+```{r}
+term_frequency_pre_LDA <- k
+for (row in 1:nrow(term_frequency_pre_LDA)) {
+  for (col in 1:ncol(term_frequency_pre_LDA)) {
+    term <- find_dtm(term_frequency_pre_LDA[row, col], m)
+    if (term$cond == 1) {
+      term_frequency_pre_LDA[row, col] <-  paste(term_frequency_pre_LDA[row, col], as.String(term$freq), sep= ", ")
+    }
+  }
+}
+
+term_frequency_pre_LDA
+
+```
+
+## LDAvis
+
+```{r}
+lambda_val = c(0, 0.25, 0.5, 0.75, 1)
+for (lambda in lambda_val) {
+  k = lda_model$get_top_words(n = 20, topic_number = 1:t1, lambda = lambda)
+    
+  k1 = data.frame(k)
+  colnames(k1) = paste0("Topic", 1:t1)
+# k = acronym_lookup(k)
+    
+  lda_model$plot(out.dir = "lda_model", open.browser = FALSE)
+    
+  j = read_json("lda_model/lda.json")
+  j = j$topic.order
+  j = as.integer(j)
+    
+  k = k[, j]
+  k = as.data.frame(k)
+    
+  write_csv(k, paste("topic_group_words_lambda_", lambda, ".csv"))
+  
+}
+  
+```
+
+\newpage
+
+
+## 2D Plots
+
+Here we dimensionally reduce the feature vectors of each grant to two dimensions using the t-distributed Stochastic Neighbor Embedding (t-SNE) algorithm and plot each grant in the reduced 2D space.
+
+```{r, message = FALSE, warning = FALSE, fig.height = 4.1}
+p = inner_join(select(ht, url:id), d)
+
+n = names(p)
+n1 = names(select(p, url:Topic2))
+n2 = sort(n[!(n %in% n1)])
+
+dtm2 = as.matrix(dtm)
+dtm3 = data.frame(dtm2)
+dtm3$Project = row.names(dtm2)
+dtm4 = inner_join(select(p, Project, Topic1, PO.Name), dtm3)
+
+set.seed(123)
+
+ts = Rtsne(as.matrix(select(dtm4, -Project, -Topic1, -PO.Name)), check_duplicates=FALSE, pca=TRUE, perplexity=30, theta=0.5, dims=2)
+dts = as.data.frame(ts$Y)
+dts2 = cbind(select(dtm4, Project, Topic1, PO.Name), dts)
+dts2 = rename(dts2, PO.Name = PO.Name)
+
+ (
+    ggplot(dts2, aes(x = V1, y = V2, col = Topic1))
+  + geom_point()
+  + ggtitle("Most Likely Topic of Each Grant in Term Frequency Space")
+  + theme_minimal()
+  + theme(legend.position = "bottom",
+          plot.title = element_text(hjust = 0.5),
+          axis.text.x = element_text(angle = 0, vjust = 0.4))
+ )
+
+
+
+
+
+set.seed(123)
+
+ts = Rtsne(as.matrix(select(p, n2)), check_duplicates=FALSE, pca=TRUE, perplexity=30, theta=0.5, dims=2)
+dts = as.data.frame(ts$Y)
+dts2 = cbind(select(p, id, Topic1), dts)
+
+ (
+    ggplot(dts2, aes(x = V1, y = V2, col = Topic1)) 
+  + geom_point()
+  + ggtitle("Most Likely Topic of Each Grant in Topic Space")
+  + theme_minimal()
+  + theme(legend.position = "bottom",
+          plot.title = element_text(hjust = 0.5),
+          axis.text.x = element_text(angle = 0, vjust = 0.4))
+ )
+```
+
+\newpage
+
+
+## Distributions of Topics
+
+Here we look at the distributions of the percentages of each topic in each grant, and the topic distributions of each PO's portfolio.  We use standard (Tukey) boxplots. In the boxplots, the black lines are the medians and the solid black dots are the means.
+
+```{r, fig.height = 4.1}
+
+p1 = (
+  p %>% select(n2)
+    %>% melt(measure.vars = n2, variable.name = "Topic", value.name = "Fraction")
+)
+
+g = (
+    ggplot(p1, aes(x = Topic, y = Fraction, fill = Topic))
+  + geom_boxplot(width = 0.8, outlier.shape = 1)
+  + stat_summary(fun.y = "mean", geom = "point", size = 0.9)
+  + ylab("Percentage")
+  + xlab("Topic")
+  + ggtitle("Distribution of Topic Percentages")
+  + scale_y_continuous(labels = scales::percent)
+  + theme_minimal()
+  + theme(legend.position = "none",
+          plot.title = element_text(hjust = 0.5),
+          axis.text.x = element_text(angle = 0, vjust = 0.4)) 
+)
+
+print(g)
+
+```
+
+## Output Application Topics
+
+```{r}
+p2 = (
+  p %>% mutate(
+               T1 = round(100*T1, 2),
+               T2 = round(100*T2, 2),
+               T3 = round(100*T3, 2),
+               T4 = round(100*T4, 2),
+               T5 = round(100*T5, 2),
+               T6 = round(100*T6, 2),
+               T7 = round(100*T7, 2),
+               T8 = round(100*T8, 2),
+               T9 = round(100*T9, 2),
+               T10 = round(100*T10, 2),
+               T11 = round(100*T11, 2),
+               T12 = round(100*T12, 2),
+               T13 = round(100*T13, 2),
+               T14 = round(100*T14, 2),
+               T15 = round(100*T15, 2),
+               T16 = round(100*T16, 2),
+               T17 = round(100*T17, 2),
+               T18 = round(100*T18, 2),
+               T19 = round(100*T19, 2))
+   # TODO: Include Title in file
+   # %>% mutate(Title = paste0('=HYPERLINK(', 
+   #                           '"https://apps.era.nih.gov/qvr/web/dd_abstract.cfm?ApplId=', 
+   #                           AID, 
+   #                           '&sourceCode=CURRENT&rcdc=Y"', 
+   #                           ', "', 
+   #                           Title, '")'))
+)
+
+write_csv(p2, "ht_topics.csv")
+```
+
+## ggupset plots
+
+```{r}
+
+topic_list <- function(x) {
+  top_list <- c()
+  index = 0
+  row <- x[n2]
+  for (i in 1: length(row)) {
+    if (as.numeric(row[i]) >= 33.33) {
+      top_list <- append(top_list, n2[i])
+      index = index + 1
+    }
+  }
+  return(top_list)
+}
+
+vals <- apply(p2, 1, function(x) topic_list(x))
+p2$TopicList <- vals
+
+p2_exclude <- p2[p2$TopicList == 'NULL',]
+
+p2 %>%
+  distinct(id, .keep_all=TRUE) %>%
+  ggplot(aes(x=TopicList)) +
+    geom_bar() +
+    scale_x_upset()
+
+print('Number of grants before applying threshold: ')
+print(nrow(p2))
+print('Number of grants after applying threshold: ')
+print(nrow(p2) - nrow(p2_exclude))
+
+```
+
+
+
+
+
+
+    
