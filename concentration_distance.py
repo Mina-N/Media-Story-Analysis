@@ -46,10 +46,10 @@ with open('hhi_ie.csv', 'w', newline = '') as csv_file:
                 topic_dict = {k: v for k, v in zip(topic_names, topic_values)}
                 writer.writerow(topic_dict)
 
-exit(1)
+
 
 # Create a “distance measure” for each article relative to the first article
-mina_dict = load_obj("mina_dict_ht")
+mina_dict = load_obj("mina_dict_ie_results")
 
 # Append order of articles to end of topic distributions
 topic_names = ["storytime", "id", "url", "cluster_id", "lmviews", "seq"]
@@ -94,3 +94,8 @@ for key, value in mina_dict.items():
                 dict[key] = topic_list
 
 save_obj(mina_dict, "mina_dict_ht_mahalanobis_first")
+day = []
+
+
+
+
