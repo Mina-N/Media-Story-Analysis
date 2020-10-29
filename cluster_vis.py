@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import pickle
 import matplotlib.pyplot as plt
+import csv
 
 # Identify clusters that are predominantly one topic or another
 # What does it mean for a cluster to be predominantly one topic?
@@ -56,31 +57,3 @@ for i in range(0, 2):
 
         plt.show()
 
-exit(1)
-# Sentiment analysis visualizations
-# Read in sentiment analysis csv file where urls are associated with sentiment scores
-
-sentiment_scores = "../sentiment_scores_bing.csv"
-sentiment = pd.read_csv(sentiment_scores, usecols = ["url", "sentiment", "positive", "negative"])
-
-# Create new sentiment dictionary
-sentiment_dict = {}
-
-# Check whether urls exist in cluster dictionary (mina_dict)
-for i in range(sentiment.shape[0]):
-    print(i)
-    # If so, assign cluster id as key and list of sentiment score, positive sentiment, and negative sentiment as value
-    for key, value in mina_dict.items():
-        for url in value:
-            if (sentiment.loc[i, "url"] in url):
-                sentiment_url = {"url": sentiment.loc[i, "url"], "sentiment": sentiment.loc[i, "sentiment"],
-                                 "positive": sentiment.loc[i, "positive"] , "negative": sentiment.loc[i, "negative"]}
-                if (key in sentiment_dict):
-                    sentiment_dict_value = sentiment_dict[key]
-                    sentiment_dict_value.append(sentiment_url)
-                    sentiment_dict[key] = sentiment_dict_value
-                else:
-                    sentiment_dict[key] = [sentiment_url]
-
-# Final result is a dictionary that organizes url and sentiment info by cluster
-save_obj(sentiment_dict, "sentiment_dict_bing_ht")
