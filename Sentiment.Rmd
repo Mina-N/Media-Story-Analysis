@@ -1,0 +1,229 @@
+---
+title: "Sentiment"
+author: "Mina Narayanan"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+## Global knitr options
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(cache = FALSE)
+knitr::opts_chunk$set(autodep = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+```
+
+```{r, warning = FALSE, message = FALSE}
+## Increase Memory Limit
+invisible(utils::memory.limit(64000))
+options(java.parameters = "-Xmx64000m")
+
+## Data Frame Packages
+library(dplyr)
+library(stringr)
+library(readr)
+library(readxl)
+
+## Data Visualization Packages
+library(ggplot2)
+library(Rtsne)
+library(jsonlite)
+
+## Text Mining Pacakges
+library(data.table)
+library(Matrix)
+library(text2vec)
+library(tm)
+library(SnowballC)
+library(rARPACK)
+library(ggupset)
+
+# Sentiment Packages
+library(tidytext)
+library(tidyverse)
+library(textdata)
+library(stringr)
+library(janeaustenr)
+library(wordcloud)
+```
+
+## Load Data
+
+First we load the data of NINR grants awarded in 2019.  We pull four sources of text:
+\begin{itemize}
+\item T - Title
+\item A - Abstract Text
+\item S - Specific Aims (SA) Text
+\end{itemize}x
+```{r, message = FALSE, cache = TRUE}
+ie = read_csv("../ie/ie_results.csv", guess_max = 1000000)
+
+```
+
+### Clean Up Text
+
+Let's clean up the text by making everything lowercase, removing punctuation, etc.
+```{r}
+# Remove weird characters
+ie$Text = str_replace_all(ie$Text, "\n", " ")
+ie$Text = str_replace_all(ie$Text, "\r", " ")
+ie$Text = str_replace_all(ie$Text, "'", "")
+ie$Text = str_replace_all(ie$Text, "-", " ")
+
+# Replace non-alpha numeric characters with a space
+ie$Text = str_replace_all(ie$Text, "[^abcdefghijklmnopqrstuvwxyzABCDEFHIJKLMNOPQRSTUVWXZ ]", " ")
+
+# Put everything in lowercase
+ie$Text = tolower(ie$Text)
+
+# Remove extra spaces and strip whitespace padding
+ie$Text = str_replace_all(ie$Text, "\\s+", " ")
+ie$Text = str_trim(ie$Text, side = "both")
+
+```
+
+### Unique Text
+
+Let's only keep applications with unique text.
+```{r}
+ie <- ie[!duplicated(ie[ , c("Text")]),]
+nrow(ie)
+ie$id <- factor(1:nrow(ie))
+
+```
+### Remove unnecessary columns and tokenize
+```{r}
+
+ie_slim <- ie %>% select(ID, Title, Text)
+
+ie_tokens <- ie_slim %>%
+  mutate(linenumber = row_number()) %>%
+  unnest_tokens(word, Text)
+
+```
+
+### Compare three sentiment dictionaries
+```{r}
+afinn <- ie_tokens %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+  group_by(index = linenumber %/% 80) %>% 
+  summarise(sentiment = sum(value)) %>% 
+  mutate(method = "AFINN")
+
+bing_and_nrc <- bind_rows(ie_tokens %>% 
+                            inner_join(get_sentiments("bing")) %>%
+                            mutate(method = "Bing et al."),
+                          ie_tokens %>% 
+                            inner_join(get_sentiments("nrc") %>% 
+                                         filter(sentiment %in% c("positive", 
+                                                                 "negative"))) %>%
+                            mutate(method = "NRC")) %>%
+  count(method, index = linenumber %/% 80, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+bind_rows(afinn, 
+          bing_and_nrc) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+```
+### Bing Sentiment Analysis with Inner Join
+```{r}
+ie_bing_sentiment_index <- ie_tokens %>%
+  inner_join(get_sentiments("bing"))%>%
+  count(index = linenumber, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+ie_bing_sentiment <- ie_tokens %>%
+  inner_join(get_sentiments("bing"))
+
+ggplot(ie_bing_sentiment_index, aes(index, sentiment)) +
+  ylim(-100, 100) + 
+  geom_col(show.legend = FALSE) 
+  #facet_wrap(~book, ncol = 2, scales = "free_x")
+
+ie_bing_sentiment_index <- ie_bing_sentiment_index %>%
+                            rename(linenumber = index)
+
+ie_bing <- merge(x = ie_bing_sentiment, y = ie_bing_sentiment_index, by = "linenumber", all.x = TRUE)
+ie_bing <- ie_bing[!duplicated(ie_bing[ , c("linenumber")]),]
+drops = c("sentiment.x", "word")
+ie_bing <- ie_bing[, !(names(ie_bing) %in% drops)]
+ie_bing <- ie_bing %>% rename(sentiment = sentiment.y)
+
+write_csv(ie_bing, "sentiment_scores_bing.csv")
+
+```
+### NRC Sentiment Analysis with Inner Join
+```{r}
+
+ie_nrc_sentiment_index <- ie_tokens %>%
+  inner_join(get_sentiments("nrc"))%>%
+  count(index = linenumber, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+ie_nrc_sentiment <- ie_tokens %>%
+  inner_join(get_sentiments("nrc"))
+
+ggplot(ie_nrc_sentiment_index, aes(index, sentiment)) +
+  ylim(-125, 250) + 
+  geom_col(show.legend = FALSE) 
+  #facet_wrap(~book, ncol = 2, scales = "free_x")
+
+ie_nrc_sentiment_index <- ie_nrc_sentiment_index %>%
+                            rename(linenumber = index)
+
+ie_nrc <- merge(x = ie_nrc_sentiment, y = ie_nrc_sentiment_index, by = "linenumber", all.x = TRUE)
+ie_nrc <- ie_nrc[!duplicated(ie_nrc[ , c("linenumber")]),]
+drops = c("sentiment.x", "word")
+ie_nrc <- ie_nrc[, !(names(ie_nrc) %in% drops)]
+ie_nrc <- ie_nrc %>% rename(sentiment = sentiment.y)
+
+write_csv(ie_nrc, "sentiment_scores_nrc.csv")
+```
+
+
+### AFINN Seniment Analysis with Inner Join
+```{r}
+
+ie_afinn_sentiment <- ie_tokens %>%
+  inner_join(get_sentiments("afinn"))
+
+ie_afinn_sentiment_index <- ie_afinn_sentiment %>%
+  group_by(index = linenumber) %>%
+  summarise(negative = sum(value < 0), positive = sum(value > 0), sentiment = positive - negative ) %>% 
+  mutate(method = "AFINN")
+
+ggplot(ie_afinn_sentiment_index, aes(index, sentiment)) +
+  ylim(-100, 100) + 
+  geom_col(show.legend = FALSE) 
+  #facet_wrap(~book, ncol = 2, scales = "free_x")
+
+ie_afinn_sentiment_index <- ie_afinn_sentiment_index %>%
+                            rename(linenumber = index)
+
+ie_afinn <- merge(x = ie_afinn_sentiment, y = ie_afinn_sentiment_index, by = "linenumber", all.x = TRUE)
+ie_afinn <- ie_afinn[!duplicated(ie_afinn[ , c("linenumber")]),]
+drops = c("value", "word", "method")
+ie_afinn <- ie_afinn[, !(names(ie_afinn) %in% drops)]
+
+write_csv(ie_afinn, "sentiment_scores_afinn.csv")
+
+```
+
+
+### Word Clouds
+```{r}
+ie_tokens %>%
+  anti_join(stop_words) %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100))
+
+```
+
