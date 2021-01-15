@@ -90,7 +90,7 @@ def save_obj(obj, name ):
 #                 topic_list.append(mahal_dist)
 #                 dict[key] = topic_list
 #
-# save_obj(mina_dict, "mina_dict_ht_mahalanobis_first")
+# save_obj(mina_dict, "mina_dict_ie_mahalanobis_first")
 #
 #
 # # Write dictionary to csv file
